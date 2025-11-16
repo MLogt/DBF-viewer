@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Boat 3D Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #viewer {
+      width: 100%;
+      height: 100vh;
+    }
+
+    /* Camera view buttons */
+    .camera-controls {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+    }
+
+    .camera-controls button {
+      padding: 6px 12px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      font-size: 13px;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+    }
+
+    .camera-controls button:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .camera-controls button.active {
+      background: #fff;
+      color: #000;
+    }
+
+    /* Bottom-right camera info overlay */
+    .camera-info {
+      position: absolute;
+      right: 16px;
+      bottom: 16px;
+      z-index: 10;
+      padding: 8px 10px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: pre;
+      font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+      max-width: 260px;
+      pointer-events: none;
+    }
+
+    /* Bottom-left Object3D list */
+    .object-list {
+      position: absolute;
+      left: 16px;
+      bottom: 16px;
+      z-index: 10;
+      max-height: 40vh;
+      width: 260px;
+      overflow: auto;
+      padding: 8px 10px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1.4;
+      font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+      pointer-events: auto;
+    }
+
+    .object-list h3 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .object-list label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+      cursor: pointer;
+    }
+
+    .object-list input[type="checkbox"] {
+      cursor: pointer;
+    }
+
+    /* Pricing panel – to the right of the parts list */
+    .pricing-panel {
+      position: absolute;
+      left: 292px; /* 16 (margin) + 260 (object-list width) + ~16 gap */
+      bottom: 16px;
+      z-index: 10;
+      max-height: 40vh;
+      width: 260px;
+      overflow: auto;
+      padding: 8px 10px;
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1.4;
+      font-family: "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace;
+      pointer-events: auto;
+    }
+
+    .pricing-panel h3 {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .pricing-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+      color: rgba(255, 255, 255, 0.4); /* faded by default */
+      font-size: 12px;
+    }
+
+    .pricing-row.active {
+      color: #ffffff; /* bright when selected */
+    }
+
+    .pricing-row span:last-child {
+      white-space: nowrap;
+    }
+
+    .pricing-total {
+      margin-top: 6px;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.3);
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-weight: 600;
+    }
+  </style>
+
+  <!-- Import map tells the browser what "three" means -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <!-- Camera preset buttons -->
+  <div class="camera-controls">
+    <button data-view="iso" class="active">Iso</button>
+    <button data-view="side">Side (flat)</button>
+    <button data-view="top">Top (flat)</button>
+  </div>
+
+  <!-- Object3D list (parts) -->
+  <div id="object-list" class="object-list">
+    <h3>Parts</h3>
+    <!-- checkboxes will be injected here -->
+  </div>
+
+  <!-- Pricing panel -->
+  <div id="pricing-panel" class="pricing-panel">
+    <h3>Pricing</h3>
+    <div id="pricing-items"></div>
+    <div class="pricing-total">
+      <span>Total</span>
+      <span id="pricing-total-amount">€0</span>
+    </div>
+  </div>
+
+  <!-- Camera info display -->
+  <div id="camera-info" class="camera-info"></div>
+
+  <div id="viewer"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+    const container = document.getElementById('viewer');
+    const cameraInfoEl = document.getElementById('camera-info');
+    const objectListEl = document.getElementById('object-list');
+    const pricingItemsContainer = document.getElementById('pricing-items');
+    const pricingTotalAmountEl = document.getElementById('pricing-total-amount');
+
+    // Scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x111111);
+
+    // --- Cameras ---
+    const aspect = container.clientWidth / container.clientHeight;
+
+    // Perspective camera (for iso)
+    const perspCamera = new THREE.PerspectiveCamera(
+      45,
+      aspect,
+      0.1,
+      1000
+    );
+    perspCamera.position.set(4, 3, 6);
+
+    // Orthographic camera (for flat top/side)
+    const frustumSize = 20;
+    const orthoCamera = new THREE.OrthographicCamera(
+      (frustumSize * aspect) / -2,
+      (frustumSize * aspect) /  2,
+      frustumSize / 2,
+      frustumSize / -2,
+      -1000,
+      1000
+    );
+
+    function updateOrthoFrustum() {
+      const aspect = container.clientWidth / container.clientHeight;
+      orthoCamera.left   = (frustumSize * aspect) / -2;
+      orthoCamera.right  = (frustumSize * aspect) /  2;
+      orthoCamera.top    =  frustumSize / 2;
+      orthoCamera.bottom = -frustumSize / 2;
+      orthoCamera.updateProjectionMatrix();
+    }
+
+    // Current active camera
+    let currentCamera = perspCamera;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(container.clientWidth, container.clientHeight);
+
+    // Color/tone mapping for nicer shading
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+
+    container.appendChild(renderer.domElement);
+
+    // Environment lighting for reflections / better curvature
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const envTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTexture;
+    pmremGenerator.dispose();
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+    scene.add(ambientLight);
+
+    // Key light
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(5, 10, 7.5);
+    scene.add(dirLight);
+
+    // Rim/fill light
+    const rimLight = new THREE.DirectionalLight(0xffffff, 0.6);
+    rimLight.position.set(-6, 4, -4);
+    scene.add(rimLight);
+
+    // Controls
+    const controls = new OrbitControls(currentCamera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.enablePan = false;
+    controls.minDistance = 1;
+    controls.maxDistance = 50;
+
+    // --- Camera preset views ---
+    const views = {
+      iso: {
+        type: 'persp',
+        position: new THREE.Vector3(4, 3, 6),
+        target:   new THREE.Vector3(0, 0, 0)
+      },
+      side: {
+        type: 'ortho',
+        position: new THREE.Vector3(15, 0, 0),
+        target:   new THREE.Vector3(0, 0, 0)
+      },
+      top: {
+        type: 'ortho',
+        position: new THREE.Vector3(0, 15, 0),
+        target:   new THREE.Vector3(0, 0, 0)
+      }
+    };
+
+    // Camera animation state
+    let cameraAnimation = null;
+
+    function switchCameraType(type) {
+      const newCamera = type === 'ortho' ? orthoCamera : perspCamera;
+      if (newCamera === currentCamera) return;
+
+      if (type === 'ortho') {
+        updateOrthoFrustum();
+      }
+
+      // Copy transform from old camera
+      newCamera.position.copy(currentCamera.position);
+      newCamera.quaternion.copy(currentCamera.quaternion);
+
+      currentCamera = newCamera;
+      controls.object = currentCamera;
+      currentCamera.updateProjectionMatrix();
+    }
+
+    function setCameraView(name, duration = 1200) {
+      const view = views[name];
+      if (!view) return;
+
+      switchCameraType(view.type);
+
+      if (duration <= 0) {
+        currentCamera.position.copy(view.position);
+        controls.target.copy(view.target);
+        controls.update();
+        cameraAnimation = null;
+        return;
+      }
+
+      const fromPos = currentCamera.position.clone();
+      const fromTarget = controls.target.clone();
+      const toPos = view.position.clone();
+      const toTarget = view.target.clone();
+
+      cameraAnimation = {
+        fromPos,
+        fromTarget,
+        toPos,
+        toTarget,
+        startTime: performance.now(),
+        duration
+      };
+    }
+
+    // Camera buttons
+    const buttons = document.querySelectorAll('.camera-controls button');
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const viewName = btn.dataset.view;
+
+        buttons.forEach(b => b.classList.toggle('active', b === btn));
+
+        setCameraView(viewName, 1000);
+      });
+    });
+
+    // --- Pricing state ---
+    const pricingItems = [];
+
+    // Format euro nicely
+    const euroFormatter = new Intl.NumberFormat('nl-NL', {
+      style: 'currency',
+      currency: 'EUR',
+      maximumFractionDigits: 0
+    });
+
+    function updatePricingTotal() {
+    let total = 0;
+    pricingItems.forEach(item => {
+        if (item.checkbox.checked) {
+        total += item.price;
+        item.row.style.display = 'flex';   // show row
+        } else {
+        item.row.style.display = 'none';   // hide row
+        }
+    });
+    pricingTotalAmountEl.textContent = euroFormatter.format(total);
+    }
+
+
+    // Load GLB model
+    const loader = new GLTFLoader();
+    loader.load(
+      'assets/boat.glb',   // <-- adjust if your path is different
+      (gltf) => {
+        const model = gltf.scene;
+        scene.add(model);
+
+        // Center & scale model
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3()).length();
+        const center = box.getCenter(new THREE.Vector3());
+
+        model.position.x += -center.x;
+        model.position.y += -center.y;
+        model.position.z += -center.z;
+
+        const scaleFactor = 4 / size;
+        model.scale.setScalar(scaleFactor);
+
+        // Dark PBR material to show curvature on a black hull
+        const boatMaterial = new THREE.MeshStandardMaterial({
+          color: 0x111111,    // almost black
+          metalness: 0.1,
+          roughness: 0.4,
+          envMapIntensity: 1.2
+        });
+
+        model.traverse(obj => {
+          if (obj.isMesh) {
+            obj.material = boatMaterial;
+          }
+        });
+
+        // Look at model center
+        controls.target.set(0, 0, 0);
+        controls.update();
+
+        // Jump to initial iso view
+        setCameraView('iso', 0);
+
+        // === Detect Object3D "parts" and build checkboxes + pricing ===
+
+        const objectItems = [];
+
+        // Prefer top-level children of model that contain meshes
+        model.children.forEach(child => {
+          let hasMesh = false;
+          child.traverse(o => {
+            if (o.isMesh) hasMesh = true;
+          });
+          if (hasMesh) {
+            objectItems.push(child);
+          }
+        });
+
+        // Fallback: group by top-most ancestor under model
+        if (objectItems.length === 0) {
+          const roots = new Map();
+          model.traverse(o => {
+            if (o.isMesh) {
+              let root = o;
+              while (root.parent && root.parent !== model) {
+                root = root.parent;
+              }
+              roots.set(root, true);
+            }
+          });
+          objectItems.push(...roots.keys());
+        }
+
+        // Clear existing list content except the title
+        objectListEl.innerHTML = '<h3>Parts</h3>';
+        pricingItemsContainer.innerHTML = ''; // clear pricing rows
+
+        // Configure prices per part name (EDIT THIS for your real prices)
+        const priceConfig = {
+          // 'Object name in GLB': priceInEuro,
+          // Example:
+          'Hull': 25000,
+          'Console': 1500,
+          'Transom': 2000
+        };
+
+        objectItems.forEach((obj, index) => {
+          const labelName =
+            (obj.name && obj.name.trim()) ? obj.name : `Object ${index + 1}`;
+
+          // --- Parts checkbox ---
+          const label = document.createElement('label');
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = true; // visible by default
+
+          checkbox.addEventListener('change', () => {
+            obj.visible = checkbox.checked;
+            updatePricingTotal();
+          });
+
+          const span = document.createElement('span');
+          span.textContent = labelName;
+
+          label.appendChild(checkbox);
+          label.appendChild(span);
+          objectListEl.appendChild(label);
+
+          // --- Pricing row ---
+          // Look up price from config, default 0 if not set yet
+          const price = priceConfig[labelName] ?? 0;
+
+          const row = document.createElement('div');
+          row.className = 'pricing-row';
+
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = labelName;
+
+          const priceSpan = document.createElement('span');
+          priceSpan.textContent = euroFormatter.format(price);
+
+          row.appendChild(nameSpan);
+          row.appendChild(priceSpan);
+          pricingItemsContainer.appendChild(row);
+
+          pricingItems.push({
+            labelName,
+            price,
+            checkbox,
+            row
+          });
+        });
+
+        console.log('Detected Object3D items for toggling/pricing:', objectItems);
+
+        // Initial total
+        updatePricingTotal();
+      },
+      undefined,
+      (err) => {
+        console.error('Error loading GLB model:', err);
+      }
+    );
+
+    // Resize handling
+    function onWindowResize() {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      const aspect = width / height;
+
+      perspCamera.aspect = aspect;
+      perspCamera.updateProjectionMatrix();
+
+      updateOrthoFrustum();
+
+      renderer.setSize(width, height);
+    }
+    window.addEventListener('resize', onWindowResize);
+
+    // Camera info overlay
+    function updateCameraInfo() {
+      const p = currentCamera.position;
+      const t = controls.target;
+      const distance = p.distanceTo(t);
+
+      cameraInfoEl.textContent =
+        `camera (${currentCamera.isOrthographicCamera ? 'Orthographic' : 'Perspective'}):\n` +
+        `  position: x=${p.x.toFixed(2)}, y=${p.y.toFixed(2)}, z=${p.z.toFixed(2)}\n` +
+        `controls.target:\n` +
+        `  x=${t.x.toFixed(2)}, y=${t.y.toFixed(2)}, z=${t.z.toFixed(2)}\n` +
+        `distance: ${distance.toFixed(2)}`;
+    }
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (cameraAnimation) {
+        const now = performance.now();
+        const elapsed = now - cameraAnimation.startTime;
+        const t = Math.min(elapsed / cameraAnimation.duration, 1);
+        const ease = t * (2 - t);
+
+        currentCamera.position.lerpVectors(
+          cameraAnimation.fromPos,
+          cameraAnimation.toPos,
+          ease
+        );
+
+        controls.target.lerpVectors(
+          cameraAnimation.fromTarget,
+          cameraAnimation.toTarget,
+          ease
+        );
+
+        if (t >= 1) {
+          cameraAnimation = null;
+        }
+      }
+
+      controls.update();
+      updateCameraInfo();
+      renderer.render(scene, currentCamera);
+    }
+    animate();
+  </script>
+</body>
+</html>
